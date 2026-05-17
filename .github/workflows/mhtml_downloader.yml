@@ -13,7 +13,7 @@ on:
         required: false
         type: string
       format:
-        description: "Format to save: 'complete' (with all assets) or 'mhtml' (single file)"
+        description: 'Format to save: complete (with all assets) or mhtml (single file)'
         required: false
         default: 'complete'
         type: choice
