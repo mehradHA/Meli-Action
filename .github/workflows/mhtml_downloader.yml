@@ -15,10 +15,11 @@ on:
       format:
         description: 'Optional format between complete and legacy'
         required: false
+        default: "complete"
         type: choice
         options:
-          -MHTML
-          -complete
+          - MHTML
+          - complete
         
 permissions:
   contents: write
