@@ -13,13 +13,13 @@ on:
         required: false
         type: string
       format:
-        description: 'Optional format between complete and legacy'
+        description: "Format to save: 'complete' (with all assets) or 'mhtml' (single file)"
         required: false
-        default: "complete"
+        default: 'complete'
         type: choice
         options:
-          - mhtml
-          - complete
+          - 'mhtml'
+          - 'complete'
         
 permissions:
   contents: write
