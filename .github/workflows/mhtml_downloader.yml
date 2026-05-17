@@ -42,6 +42,7 @@ jobs:
         run: |
           pip install pyppeteer
           pip install aiohttp aiofiles pyppeteer
+          pip install cssutils beautifulsoup4 aiohttp aiofiles pyppeteer
 
       - name: Run MHTML downloader
         run: |
