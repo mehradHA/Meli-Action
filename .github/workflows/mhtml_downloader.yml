@@ -12,7 +12,13 @@ on:
         description: 'Optional title for the output file (no spaces/special chars)'
         required: false
         type: string
-
+      format:
+        description: 'Optional format between complete and legacy'
+        required: false
+        type: choice
+        options:
+          -MHTML
+          -complete
         
 permissions:
   contents: write
