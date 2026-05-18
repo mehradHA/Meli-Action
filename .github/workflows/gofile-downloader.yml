@@ -48,45 +48,78 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full curl jq python3 python3-pip
-          # Install the actively maintained downloader
-          pip3 install uv
-          # Clone the latest version of the working downloader
-          git clone https://github.com/ltsdw/gofile-downloader.git
-          cd gofile-downloader
+          sudo apt-get install -y p7zip-full curl jq
 
-      - name: Download from Gofile
+      - name: Download from Gofile (Direct API)
         id: download
         shell: bash
         run: |
           URL="${{ github.event.inputs.gofile_url }}"
           PASSWORD="${{ github.event.inputs.zip_password }}"
+          
           mkdir -p temp_dl
-          cd gofile-downloader
+          cd temp_dl
 
-          # Use uv run to execute the script (handles dependencies automatically)
-          if [ -n "$PASSWORD" ]; then
-            uv run gofile-downloader.py "$URL" "$PASSWORD"
+          # Extract file ID from URL
+          if [[ $URL =~ gofile\.io/d/([a-zA-Z0-9]+) ]]; then
+            FILE_ID="${BASH_REMATCH[1]}"
           else
-            uv run gofile-downloader.py "$URL"
+            echo "❌ Invalid Gofile URL"
+            exit 1
           fi
+          echo "File ID: $FILE_ID"
 
-          # Find and move the downloaded file
-          DOWNLOADED_FILE=$(find ./downloads -type f | head -1)
-          if [[ -z "$DOWNLOADED_FILE" ]]; then
-            echo "No file downloaded"
+          # 1. Create a guest account (get token)
+          echo "🔄 Creating guest account..."
+          TOKEN_RESPONSE=$(curl -s -X POST 'https://gofile.io/api/accounts')
+          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token')
+          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
+            echo "❌ Failed to get token"
+            echo "Response: $TOKEN_RESPONSE"
+            exit 1
+          fi
+          echo "✅ Token obtained"
+
+          # 2. Get file contents
+          echo "📡 Fetching file info..."
+          CONTENT_URL="https://gofile.io/api/contents/$FILE_ID?token=$TOKEN"
+          CONTENT_RESPONSE=$(curl -s "$CONTENT_URL")
+          STATUS=$(echo "$CONTENT_RESPONSE" | jq -r '.status')
+
+          if [[ "$STATUS" != "ok" ]]; then
+            echo "❌ API error: $STATUS"
+            echo "Response: $CONTENT_RESPONSE"
             exit 1
           fi
 
-          FILENAME=$(basename "$DOWNLOADED_FILE")
-          FILESIZE=$(stat -c%s "$DOWNLOADED_FILE")
+          # Extract first file (assuming single file in container)
+          CONTENT_ID=$(echo "$CONTENT_RESPONSE" | jq -r '.data.contents | keys[0]')
+          FILENAME=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$CONTENT_ID\"].name")
+          SIZE=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$CONTENT_ID\"].size")
+          DOWNLOAD_LINK=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$CONTENT_ID\"].link")
 
-          # Move to our temp_dl directory
-          mv "$DOWNLOADED_FILE" ../temp_dl/
+          if [[ -z "$FILENAME" || "$FILENAME" == "null" ]]; then
+            echo "❌ No file found in container"
+            exit 1
+          fi
 
+          echo "📄 File: $FILENAME"
+          echo "📦 Size: $SIZE bytes"
+
+          # 3. Download the file
+          echo "⬇️ Downloading..."
+          curl -L --fail --retry 3 --retry-delay 2 -o "$FILENAME" "$DOWNLOAD_LINK"
+
+          if [[ ! -f "$FILENAME" ]]; then
+            echo "❌ Download failed"
+            exit 1
+          fi
+
+          echo "✅ Download complete"
           echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
-          echo "filesize=$FILESIZE" >> "$GITHUB_OUTPUT"
-          echo "filepath=../temp_dl/$FILENAME" >> "$GITHUB_OUTPUT"
+          echo "filesize=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "filepath=$(pwd)/$FILENAME" >> "$GITHUB_OUTPUT"
+
           cd ..
 
       - name: Create Split Archive
@@ -164,4 +197,4 @@ jobs:
       - name: Cleanup
         if: always()
         shell: bash
-        run: rm -rf temp_dl gofile-downloader
+        run: rm -rf temp_dl
