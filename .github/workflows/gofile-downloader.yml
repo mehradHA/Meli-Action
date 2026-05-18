@@ -63,7 +63,7 @@ jobs:
 
           # Run gofile-dl; it will handle tokens and download the file
           # The output filename is usually the original name
-          gofile-dl "$URL" --no-folders
+          gofile-dl "$URL"
 
           # Find the downloaded file (first non-directory)
           DOWNLOADED_FILE=$(find . -maxdepth 1 -type f | head -1)
