@@ -48,35 +48,33 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full curl jq
+          sudo apt-get install -y p7zip-full jq
 
-      - name: Install martadams89/gofile-dl
-        run: |
-          # Download the latest Linux binary from GitHub releases
-          LATEST_URL=$(curl -s https://api.github.com/repos/martadams89/gofile-dl/releases/latest | grep "browser_download_url.*linux_amd64" | cut -d '"' -f 4)
-          curl -L "$LATEST_URL" -o gofile-dl
-          chmod +x gofile-dl
-          sudo mv gofile-dl /usr/local/bin/
-
-      - name: Download from Gofile
+      - name: Download from Gofile (using Docker)
         id: download
         shell: bash
         run: |
           URL="${{ github.event.inputs.gofile_url }}"
           PASSWORD="${{ github.event.inputs.zip_password }}"
           mkdir -p temp_dl
-          cd temp_dl
 
-          # Build command
-          CMD="gofile-dl download -l \"$URL\" -d ."
+          # Use the official Docker image from GHCR
+          # The image's entrypoint is the web server; we override it to run the CLI tool
+          DOCKER_CMD="docker run --rm \
+            -v \"$(pwd)/temp_dl:/app/downloads\" \
+            --entrypoint /usr/local/bin/gofile-dl \
+            ghcr.io/martadams89/gofile-dl:latest \
+            download -l \"$URL\" -d /app/downloads"
+
           if [ -n "$PASSWORD" ]; then
-            CMD="$CMD -p \"$PASSWORD\""
+            DOCKER_CMD="$DOCKER_CMD -p \"$PASSWORD\""
           fi
 
-          echo "Running: $CMD"
-          eval "$CMD"
+          echo "Running: $DOCKER_CMD"
+          eval "$DOCKER_CMD"
 
           # Find the downloaded file (exclude any .part files)
+          cd temp_dl
           DOWNLOADED_FILE=$(find . -maxdepth 1 -type f ! -name "*.part" | head -1)
           if [[ -z "$DOWNLOADED_FILE" ]]; then
             echo "❌ No file downloaded"
@@ -94,6 +92,7 @@ jobs:
           cd ..
 
       - name: Create Split Archive
+        # ... (rest of your workflow remains unchanged)
         id: archive
         shell: bash
         run: |
