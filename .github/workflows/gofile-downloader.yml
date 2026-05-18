@@ -58,11 +58,11 @@ jobs:
           PASSWORD="${{ github.event.inputs.zip_password }}"
           mkdir -p temp_dl
 
-          # The official Docker image's entrypoint is the CLI tool.
+          # Use the full path to the binary inside the container
           DOCKER_CMD="docker run --rm \
             -v \"$(pwd)/temp_dl:/app/downloads\" \
             martadams89/gofile-dl \
-            download -l \"$URL\" -d /app/downloads"
+            /gofile-dl download -l \"$URL\" -d /app/downloads"
 
           if [ -n "$PASSWORD" ]; then
             DOCKER_CMD="$DOCKER_CMD -p \"$PASSWORD\""
