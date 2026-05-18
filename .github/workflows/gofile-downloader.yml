@@ -48,11 +48,17 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full jq
-          # Install the working gofile-dl CLI tool
-          pip install gofile-dl
+          sudo apt-get install -y p7zip-full curl jq
 
-      - name: Download from Gofile (using gofile-dl CLI)
+      - name: Install martadams89/gofile-dl
+        run: |
+          # Download the latest Linux binary from GitHub releases
+          LATEST_URL=$(curl -s https://api.github.com/repos/martadams89/gofile-dl/releases/latest | grep "browser_download_url.*linux_amd64" | cut -d '"' -f 4)
+          curl -L "$LATEST_URL" -o gofile-dl
+          chmod +x gofile-dl
+          sudo mv gofile-dl /usr/local/bin/
+
+      - name: Download from Gofile
         id: download
         shell: bash
         run: |
@@ -61,31 +67,31 @@ jobs:
           mkdir -p temp_dl
           cd temp_dl
 
-          # Prepare the download command
-          CMD="gofile-dl \"$URL\" --output-dir ."
+          # Build command
+          CMD="gofile-dl download -l \"$URL\" -d ."
           if [ -n "$PASSWORD" ]; then
-            CMD="$CMD --password \"$PASSWORD\""
+            CMD="$CMD -p \"$PASSWORD\""
           fi
 
           echo "Running: $CMD"
           eval "$CMD"
 
-          # Find the downloaded file (exclude temporary files)
+          # Find the downloaded file (exclude any .part files)
           DOWNLOADED_FILE=$(find . -maxdepth 1 -type f ! -name "*.part" | head -1)
           if [[ -z "$DOWNLOADED_FILE" ]]; then
-            echo "No file downloaded"
+            echo "❌ No file downloaded"
             exit 1
           fi
 
           FILENAME=$(basename "$DOWNLOADED_FILE")
           FILESIZE=$(stat -c%s "$DOWNLOADED_FILE")
 
+          echo "✅ Downloaded: $FILENAME ($FILESIZE bytes)"
           echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
           echo "filesize=$FILESIZE" >> "$GITHUB_OUTPUT"
           echo "filepath=$(pwd)/$FILENAME" >> "$GITHUB_OUTPUT"
-          cd ..
 
-      # ... rest of your workflow (Create Split Archive, Upload, etc.) remains the same ...
+          cd ..
 
       - name: Create Split Archive
         id: archive
