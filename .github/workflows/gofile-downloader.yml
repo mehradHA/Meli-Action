@@ -50,104 +50,42 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y p7zip-full curl jq
 
-      - name: Download from Gofile (Direct API)
+      - name: Download from Gofile (using martadams89/gofile-dl)
         id: download
         shell: bash
         run: |
           URL="${{ github.event.inputs.gofile_url }}"
           PASSWORD="${{ github.event.inputs.zip_password }}"
-          
           mkdir -p temp_dl
+
+          # Build the docker command
+          # Mount the temp_dl directory to /app/downloads (the tool's default output path)
+          DOCKER_CMD="docker run --rm -v \"$(pwd)/temp_dl:/app/downloads\" martadams89/gofile-dl download -l \"$URL\""
+
+          # If a password is provided, add the flag
+          if [ -n "$PASSWORD" ]; then
+            DOCKER_CMD="$DOCKER_CMD -p \"$PASSWORD\""
+          fi
+
+          echo "Running: $DOCKER_CMD"
+          eval "$DOCKER_CMD"
+
+          # The tool downloads files into /app/downloads inside the container,
+          # which maps to ./temp_dl on the host.
+          # Find the downloaded file(s) in temp_dl (exclude any .part or temporary files)
           cd temp_dl
-
-          # Extract file ID from URL
-          if [[ $URL =~ gofile\.io/d/([a-zA-Z0-9]+) ]]; then
-            FILE_ID="${BASH_REMATCH[1]}"
-          else
-            echo "❌ Invalid Gofile URL"
-            exit 1
-          fi
-          echo "📝 File ID: $FILE_ID"
-
-          # Use the correct API base URL (no /api prefix)
-          API_BASE="https://api.gofile.io"
-
-          # 1. Create a guest account to get a token
-          echo "🔄 Creating guest account..."
-          TOKEN_RESPONSE=$(curl -s -X POST "${API_BASE}/accounts" \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-            -H "Accept: application/json")
-
-          # Debug: show raw response (helps debugging)
-          echo "Token response: $TOKEN_RESPONSE"
-
-          # Validate JSON
-          if ! echo "$TOKEN_RESPONSE" | jq -e . >/dev/null 2>&1; then
-            echo "❌ API did not return valid JSON"
+          DOWNLOADED_FILE=$(find . -maxdepth 1 -type f ! -name "*.part" | head -1)
+          if [[ -z "$DOWNLOADED_FILE" ]]; then
+            echo "❌ No file downloaded"
             exit 1
           fi
 
-          STATUS=$(echo "$TOKEN_RESPONSE" | jq -r '.status')
-          if [[ "$STATUS" != "ok" ]]; then
-            echo "❌ API error: $STATUS"
-            echo "Response: $TOKEN_RESPONSE"
-            exit 1
-          fi
+          FILENAME=$(basename "$DOWNLOADED_FILE")
+          FILESIZE=$(stat -c%s "$DOWNLOADED_FILE")
 
-          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token')
-          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-            echo "❌ Failed to get token"
-            exit 1
-          fi
-          echo "✅ Token obtained"
-
-          # 2. Get file contents using the token
-          echo "📡 Fetching file info..."
-          CONTENT_URL="${API_BASE}/contents/${FILE_ID}?token=${TOKEN}"
-          CONTENT_RESPONSE=$(curl -s "$CONTENT_URL" \
-            -H "User-Agent: Mozilla/5.0" \
-            -H "Accept: application/json")
-
-          echo "Content response: $CONTENT_RESPONSE"
-
-          if ! echo "$CONTENT_RESPONSE" | jq -e . >/dev/null 2>&1; then
-            echo "❌ Invalid JSON from content API"
-            exit 1
-          fi
-
-          STATUS=$(echo "$CONTENT_RESPONSE" | jq -r '.status')
-          if [[ "$STATUS" != "ok" ]]; then
-            echo "❌ Content API error: $STATUS"
-            echo "Response: $CONTENT_RESPONSE"
-            exit 1
-          fi
-
-          # Extract the first file (assuming the container holds a single file)
-          CONTENT_ID=$(echo "$CONTENT_RESPONSE" | jq -r '.data.contents | keys[0]')
-          FILENAME=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$CONTENT_ID\"].name")
-          SIZE=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$CONTENT_ID\"].size")
-          DOWNLOAD_LINK=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$CONTENT_ID\"].link")
-
-          if [[ -z "$FILENAME" || "$FILENAME" == "null" ]]; then
-            echo "❌ No file found in container"
-            exit 1
-          fi
-
-          echo "📄 File: $FILENAME"
-          echo "📦 Size: $SIZE bytes"
-
-          # 3. Download the file using the direct link
-          echo "⬇️ Downloading..."
-          curl -L --fail --retry 3 --retry-delay 2 -o "$FILENAME" "$DOWNLOAD_LINK"
-
-          if [[ ! -f "$FILENAME" ]]; then
-            echo "❌ Download failed"
-            exit 1
-          fi
-
-          echo "✅ Download complete"
+          echo "✅ Downloaded: $FILENAME ($FILESIZE bytes)"
           echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
-          echo "filesize=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "filesize=$FILESIZE" >> "$GITHUB_OUTPUT"
           echo "filepath=$(pwd)/$FILENAME" >> "$GITHUB_OUTPUT"
 
           cd ..
