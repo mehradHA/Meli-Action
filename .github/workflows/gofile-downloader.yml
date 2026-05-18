@@ -48,38 +48,45 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full curl jq python3-pip
-          pip3 install gofile-dl
+          sudo apt-get install -y p7zip-full curl jq python3 python3-pip
+          # Install the actively maintained downloader
+          pip3 install uv
+          # Clone the latest version of the working downloader
+          git clone https://github.com/ltsdw/gofile-downloader.git
+          cd gofile-downloader
 
-      - name: Download from Gofile using gofile-dl
+      - name: Download from Gofile
         id: download
         shell: bash
         run: |
           URL="${{ github.event.inputs.gofile_url }}"
+          PASSWORD="${{ github.event.inputs.zip_password }}"
           mkdir -p temp_dl
+          cd gofile-downloader
 
-          # gofile-dl downloads to current directory; we'll move it later
-          cd temp_dl
+          # Use uv run to execute the script (handles dependencies automatically)
+          if [ -n "$PASSWORD" ]; then
+            uv run gofile-downloader.py "$URL" "$PASSWORD"
+          else
+            uv run gofile-downloader.py "$URL"
+          fi
 
-          # Run gofile-dl; it will handle tokens and download the file
-          # The output filename is usually the original name
-          gofile-dl "$URL"
-
-          # Find the downloaded file (first non-directory)
-          DOWNLOADED_FILE=$(find . -maxdepth 1 -type f | head -1)
+          # Find and move the downloaded file
+          DOWNLOADED_FILE=$(find ./downloads -type f | head -1)
           if [[ -z "$DOWNLOADED_FILE" ]]; then
             echo "No file downloaded"
             exit 1
           fi
 
-          # Get filename and size
           FILENAME=$(basename "$DOWNLOADED_FILE")
           FILESIZE=$(stat -c%s "$DOWNLOADED_FILE")
 
+          # Move to our temp_dl directory
+          mv "$DOWNLOADED_FILE" ../temp_dl/
+
           echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
           echo "filesize=$FILESIZE" >> "$GITHUB_OUTPUT"
-          echo "filepath=$(pwd)/$FILENAME" >> "$GITHUB_OUTPUT"
-
+          echo "filepath=../temp_dl/$FILENAME" >> "$GITHUB_OUTPUT"
           cd ..
 
       - name: Create Split Archive
@@ -157,4 +164,4 @@ jobs:
       - name: Cleanup
         if: always()
         shell: bash
-        run: rm -rf temp_dl
+        run: rm -rf temp_dl gofile-downloader
