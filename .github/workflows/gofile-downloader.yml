@@ -7,19 +7,16 @@ on:
         description: "Gofile URL (e.g., https://gofile.io/d/abc123)"
         required: true
         type: string
-
       zip_password:
         description: "Password for archive (leave empty for no password)"
         required: false
         default: ""
         type: string
-
       max_part_mb:
         description: "Maximum size per part (MB)"
         required: false
         default: "90"
         type: string
-
       upload_method:
         description: "Upload Method"
         required: true
@@ -28,7 +25,6 @@ on:
         options:
           - repository
           - release
-
       release_tag:
         description: "Release Tag"
         required: false
@@ -52,125 +48,39 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full curl jq
+          sudo apt-get install -y p7zip-full curl jq python3-pip
+          pip3 install gofile-dl
 
-      - name: Get Download Info
-        id: info
-        shell: bash
-        run: |
-          GOFILE_URL="${{ github.event.inputs.gofile_url }}"
-
-          # Extract file ID from URL (e.g., https://gofile.io/d/abc123 -> abc123)
-          if [[ $GOFILE_URL =~ gofile\.io/d/([a-zA-Z0-9]+) ]]; then
-            FILE_ID="${BASH_REMATCH[1]}"
-          else
-            echo "❌ Invalid Gofile URL format. Expected: https://gofile.io/d/XXXXX"
-            exit 1
-          fi
-
-          echo "📝 File ID: $FILE_ID"
-
-          # 1. Get a guest account token
-          echo "🔑 Getting guest token..."
-          TOKEN_RESPONSE=$(curl -s -X POST 'https://api.gofile.io/accounts')
-          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token')
-
-          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-            echo "❌ Failed to get guest token"
-            echo "API Response: $TOKEN_RESPONSE"
-            exit 1
-          fi
-
-          echo "✅ Guest token obtained"
-
-          # 2. Extract website token from Gofile's JavaScript
-          echo "🌐 Extracting website token..."
-          JS_URL="https://gofile.io/dist/js/alljs.js"
-          JS_CONTENT=$(curl -s "$JS_URL")
-          WEBSITE_TOKEN=$(echo "$JS_CONTENT" | grep -oP "fetchData\.wt\s*=\s*['\"]\K[^'\"]+" | head -1)
-
-          if [[ -z "$WEBSITE_TOKEN" ]]; then
-            echo "⚠️ Could not extract website token, proceeding without it (may fail for some files)"
-            WEBSITE_TOKEN=""
-          else
-            echo "✅ Website token obtained"
-          fi
-
-          # 3. Get content info using the correct endpoint
-          echo "📡 Fetching content info for ID: $FILE_ID"
-          API_URL="https://api.gofile.io/getContent?contentId=$FILE_ID&token=$TOKEN&wt=$WEBSITE_TOKEN&cache=true"
-          CONTENT_RESPONSE=$(curl -s "$API_URL")
-          STATUS=$(echo "$CONTENT_RESPONSE" | jq -r '.status')
-
-          echo "API Response Status: $STATUS"
-
-          # Check if password is required
-          if [[ "$STATUS" == "error-passwordRequired" ]]; then
-            echo "🔐 This file is password protected"
-            if [[ -n "${{ github.event.inputs.zip_password }}" ]]; then
-              PASSWORD_HASH=$(echo -n "${{ github.event.inputs.zip_password }}" | sha256sum | cut -d' ' -f1)
-              echo "Using provided password"
-              CONTENT_RESPONSE=$(curl -s "$API_URL&password=$PASSWORD_HASH")
-              STATUS=$(echo "$CONTENT_RESPONSE" | jq -r '.status')
-            else
-              echo "❌ Password required but not provided"
-              exit 1
-            fi
-          fi
-
-          if [[ "$STATUS" != "ok" ]]; then
-            echo "❌ Failed to get content info"
-            echo "API Response: $CONTENT_RESPONSE"
-            exit 1
-          fi
-
-          # Parse the response to get file information
-          # Note: The API returns contents as an object, not an array
-          FIRST_CONTENT_ID=$(echo "$CONTENT_RESPONSE" | jq -r '.data.contents | keys[0]')
-          FILENAME=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$FIRST_CONTENT_ID\"].name")
-          FILESIZE=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$FIRST_CONTENT_ID\"].size")
-          FILE_LINK=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$FIRST_CONTENT_ID\"].link")
-
-          if [[ -z "$FILENAME" || "$FILENAME" == "null" ]]; then
-            echo "❌ Failed to extract filename"
-            echo "API Response: $CONTENT_RESPONSE"
-            exit 1
-          fi
-
-          if [[ -z "$FILE_LINK" || "$FILE_LINK" == "null" ]]; then
-            echo "❌ No download link returned"
-            exit 1
-          fi
-
-          # Sanitize filename
-          FILENAME=$(echo "$FILENAME" | sed 's/[^a-zA-Z0-9._() -]/_/g')
-
-          echo "✅ File found: $FILENAME"
-          echo "📦 Size: $FILESIZE bytes"
-
-          echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
-          echo "download_url=$FILE_LINK" >> "$GITHUB_OUTPUT"
-          echo "filesize=$FILESIZE" >> "$GITHUB_OUTPUT"
-
-      - name: Download File
+      - name: Download from Gofile using gofile-dl
         id: download
         shell: bash
         run: |
+          URL="${{ github.event.inputs.gofile_url }}"
           mkdir -p temp_dl
 
-          DOWNLOAD_URL="${{ steps.info.outputs.download_url }}"
-          FILENAME="${{ steps.info.outputs.filename }}"
+          # gofile-dl downloads to current directory; we'll move it later
+          cd temp_dl
 
-          echo "⬇️ Downloading: $FILENAME"
-          echo "🔗 Download URL: $DOWNLOAD_URL"
+          # Run gofile-dl; it will handle tokens and download the file
+          # The output filename is usually the original name
+          gofile-dl "$URL" --no-folders
 
-          # Use curl with follow redirects, resume support, and retries
-          curl -L --fail --retry 3 --retry-delay 2 \
-            -o "temp_dl/$FILENAME" \
-            "$DOWNLOAD_URL"
+          # Find the downloaded file (first non-directory)
+          DOWNLOADED_FILE=$(find . -maxdepth 1 -type f | head -1)
+          if [[ -z "$DOWNLOADED_FILE" ]]; then
+            echo "No file downloaded"
+            exit 1
+          fi
 
-          echo "✅ Download complete"
-          echo "filepath=temp_dl/$FILENAME" >> "$GITHUB_OUTPUT"
+          # Get filename and size
+          FILENAME=$(basename "$DOWNLOADED_FILE")
+          FILESIZE=$(stat -c%s "$DOWNLOADED_FILE")
+
+          echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
+          echo "filesize=$FILESIZE" >> "$GITHUB_OUTPUT"
+          echo "filepath=$(pwd)/$FILENAME" >> "$GITHUB_OUTPUT"
+
+          cd ..
 
       - name: Create Split Archive
         id: archive
@@ -196,15 +106,13 @@ jobs:
             7z a -mx=3 -v${THRESH_MB}m "${ARCHIVE_BASE}.7z" "$BASENAME"
           fi
 
-          # If only one part was created, rename it to remove the .001 extension
+          # If only one part, rename to remove .001
           if [ -f "${ARCHIVE_BASE}.7z.001" ] && [ ! -f "${ARCHIVE_BASE}.7z.002" ]; then
             mv "${ARCHIVE_BASE}.7z.001" "${ARCHIVE_BASE}.7z"
           fi
 
-          # Remove original downloaded file to avoid committing large raw files
-          if [ -f "$BASENAME" ]; then
-            rm -f "$BASENAME"
-          fi
+          # Remove original file
+          rm -f "$BASENAME"
 
           echo "archive_name=${ARCHIVE_BASE}.7z" >> "$GITHUB_OUTPUT"
 
@@ -224,13 +132,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           mkdir -p downloads
-
           mv temp_dl/*.7z* downloads/ 2>/dev/null || true
 
           git add downloads/
-
-          git commit -m "Gofile Download: ${{ steps.info.outputs.filename }} [skip ci]" || echo "Nothing to commit"
-
+          git commit -m "Gofile Download: ${{ steps.download.outputs.filename }} [skip ci]" || echo "Nothing to commit"
           git push
 
       - name: Upload to GitHub Releases
@@ -242,16 +147,14 @@ jobs:
           body: |
             Gofile download completed.
 
-            File: ${{ steps.info.outputs.filename }}
-            Size: ${{ steps.info.outputs.filesize }} bytes
+            File: ${{ steps.download.outputs.filename }}
+            Size: ${{ steps.download.outputs.filesize }} bytes
             Date: ${{ steps.get_date.outputs.date }}
           files: temp_dl/*.7z*
-
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cleanup
         if: always()
         shell: bash
-        run: |
-          rm -rf temp_dl
+        run: rm -rf temp_dl
