@@ -64,40 +64,92 @@ jobs:
           if [[ $GOFILE_URL =~ gofile\.io/d/([a-zA-Z0-9]+) ]]; then
             FILE_ID="${BASH_REMATCH[1]}"
           else
-            echo "Invalid Gofile URL format. Expected: https://gofile.io/d/XXXXX"
+            echo "❌ Invalid Gofile URL format. Expected: https://gofile.io/d/XXXXX"
             exit 1
           fi
 
-          # Get file info from Gofile API
-          API_URL="https://api.gofile.io/getFile?fileId=${FILE_ID}"
-          INFO=$(curl -s "$API_URL")
+          echo "📝 File ID: $FILE_ID"
 
-          # Check API response status
-          STATUS=$(echo "$INFO" | jq -r '.status')
+          # 1. Get a guest account token
+          echo "🔑 Getting guest token..."
+          TOKEN_RESPONSE=$(curl -s -X POST 'https://api.gofile.io/accounts')
+          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token')
+
+          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
+            echo "❌ Failed to get guest token"
+            echo "API Response: $TOKEN_RESPONSE"
+            exit 1
+          fi
+
+          echo "✅ Guest token obtained"
+
+          # 2. Extract website token from Gofile's JavaScript
+          echo "🌐 Extracting website token..."
+          JS_URL="https://gofile.io/dist/js/alljs.js"
+          JS_CONTENT=$(curl -s "$JS_URL")
+          WEBSITE_TOKEN=$(echo "$JS_CONTENT" | grep -oP "fetchData\.wt\s*=\s*['\"]\K[^'\"]+" | head -1)
+
+          if [[ -z "$WEBSITE_TOKEN" ]]; then
+            echo "⚠️ Could not extract website token, proceeding without it (may fail for some files)"
+            WEBSITE_TOKEN=""
+          else
+            echo "✅ Website token obtained"
+          fi
+
+          # 3. Get content info using the correct endpoint
+          echo "📡 Fetching content info for ID: $FILE_ID"
+          API_URL="https://api.gofile.io/getContent?contentId=$FILE_ID&token=$TOKEN&wt=$WEBSITE_TOKEN&cache=true"
+          CONTENT_RESPONSE=$(curl -s "$API_URL")
+          STATUS=$(echo "$CONTENT_RESPONSE" | jq -r '.status')
+
+          echo "API Response Status: $STATUS"
+
+          # Check if password is required
+          if [[ "$STATUS" == "error-passwordRequired" ]]; then
+            echo "🔐 This file is password protected"
+            if [[ -n "${{ github.event.inputs.zip_password }}" ]]; then
+              PASSWORD_HASH=$(echo -n "${{ github.event.inputs.zip_password }}" | sha256sum | cut -d' ' -f1)
+              echo "Using provided password"
+              CONTENT_RESPONSE=$(curl -s "$API_URL&password=$PASSWORD_HASH")
+              STATUS=$(echo "$CONTENT_RESPONSE" | jq -r '.status')
+            else
+              echo "❌ Password required but not provided"
+              exit 1
+            fi
+          fi
+
           if [[ "$STATUS" != "ok" ]]; then
-            echo "Gofile API error: $INFO"
+            echo "❌ Failed to get content info"
+            echo "API Response: $CONTENT_RESPONSE"
             exit 1
           fi
 
-          FILENAME=$(echo "$INFO" | jq -r '.data.fileName')
-          FILESIZE=$(echo "$INFO" | jq -r '.data.size')
-          DOWNLOAD_URL=$(echo "$INFO" | jq -r '.data.link')
+          # Parse the response to get file information
+          # Note: The API returns contents as an object, not an array
+          FIRST_CONTENT_ID=$(echo "$CONTENT_RESPONSE" | jq -r '.data.contents | keys[0]')
+          FILENAME=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$FIRST_CONTENT_ID\"].name")
+          FILESIZE=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$FIRST_CONTENT_ID\"].size")
+          FILE_LINK=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$FIRST_CONTENT_ID\"].link")
 
           if [[ -z "$FILENAME" || "$FILENAME" == "null" ]]; then
-            echo "Failed to extract filename"
+            echo "❌ Failed to extract filename"
+            echo "API Response: $CONTENT_RESPONSE"
             exit 1
           fi
 
-          if [[ -z "$DOWNLOAD_URL" || "$DOWNLOAD_URL" == "null" ]]; then
-            echo "No download link returned"
+          if [[ -z "$FILE_LINK" || "$FILE_LINK" == "null" ]]; then
+            echo "❌ No download link returned"
             exit 1
           fi
 
-          # Sanitize filename (remove problematic characters)
+          # Sanitize filename
           FILENAME=$(echo "$FILENAME" | sed 's/[^a-zA-Z0-9._() -]/_/g')
 
+          echo "✅ File found: $FILENAME"
+          echo "📦 Size: $FILESIZE bytes"
+
           echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
-          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "download_url=$FILE_LINK" >> "$GITHUB_OUTPUT"
           echo "filesize=$FILESIZE" >> "$GITHUB_OUTPUT"
 
       - name: Download File
@@ -109,13 +161,15 @@ jobs:
           DOWNLOAD_URL="${{ steps.info.outputs.download_url }}"
           FILENAME="${{ steps.info.outputs.filename }}"
 
-          echo "Downloading: $FILENAME"
+          echo "⬇️ Downloading: $FILENAME"
+          echo "🔗 Download URL: $DOWNLOAD_URL"
 
           # Use curl with follow redirects, resume support, and retries
           curl -L --fail --retry 3 --retry-delay 2 \
             -o "temp_dl/$FILENAME" \
             "$DOWNLOAD_URL"
 
+          echo "✅ Download complete"
           echo "filepath=temp_dl/$FILENAME" >> "$GITHUB_OUTPUT"
 
       - name: Create Split Archive
