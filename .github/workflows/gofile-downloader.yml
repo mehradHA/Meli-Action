@@ -50,7 +50,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y p7zip-full jq
 
-      - name: Download from Gofile (using Docker)
+      - name: Download from Gofile (using official Docker image)
         id: download
         shell: bash
         run: |
@@ -58,12 +58,10 @@ jobs:
           PASSWORD="${{ github.event.inputs.zip_password }}"
           mkdir -p temp_dl
 
-          # Use the official Docker image from GHCR
-          # The image's entrypoint is the web server; we override it to run the CLI tool
+          # The official Docker image's entrypoint is the CLI tool.
           DOCKER_CMD="docker run --rm \
             -v \"$(pwd)/temp_dl:/app/downloads\" \
-            --entrypoint /usr/local/bin/gofile-dl \
-            ghcr.io/martadams89/gofile-dl:latest \
+            martadams89/gofile-dl \
             download -l \"$URL\" -d /app/downloads"
 
           if [ -n "$PASSWORD" ]; then
@@ -73,7 +71,6 @@ jobs:
           echo "Running: $DOCKER_CMD"
           eval "$DOCKER_CMD"
 
-          # Find the downloaded file (exclude any .part files)
           cd temp_dl
           DOWNLOADED_FILE=$(find . -maxdepth 1 -type f ! -name "*.part" | head -1)
           if [[ -z "$DOWNLOADED_FILE" ]]; then
@@ -92,7 +89,6 @@ jobs:
           cd ..
 
       - name: Create Split Archive
-        # ... (rest of your workflow remains unchanged)
         id: archive
         shell: bash
         run: |
