@@ -48,30 +48,36 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full jq
+          sudo apt-get install -y p7zip-full jq python3 python3-pip git
 
-      - name: Download from Gofile (using official Docker image)
+      - name: Install gofile-dl CLI Tool
+        run: |
+          # Clone the repository and install dependencies
+          git clone https://github.com/rkwyu/gofile-dl.git
+          cd gofile-dl
+          pip3 install -r requirements.txt
+          chmod +x run.py
+          echo "gofile-dl installed successfully"
+
+      - name: Download from Gofile
         id: download
         shell: bash
         run: |
           URL="${{ github.event.inputs.gofile_url }}"
           PASSWORD="${{ github.event.inputs.zip_password }}"
           mkdir -p temp_dl
+          cd temp_dl
 
-          # Build the docker command - let the container use its default entrypoint
-          DOCKER_CMD="docker run --rm \
-            -v \"$(pwd)/temp_dl:/app/downloads\" \
-            martadams89/gofile-dl \
-            download -l \"$URL\" -d /app/downloads"
-
+          # Build the download command
+          CMD="python3 ../gofile-dl/run.py -d . \"$URL\""
           if [ -n "$PASSWORD" ]; then
-            DOCKER_CMD="$DOCKER_CMD -p \"$PASSWORD\""
+            CMD="$CMD -p \"$PASSWORD\""
           fi
 
-          echo "Running: $DOCKER_CMD"
-          eval "$DOCKER_CMD"
+          echo "Running: $CMD"
+          eval "$CMD"
 
-          cd temp_dl
+          # Find the downloaded file
           DOWNLOADED_FILE=$(find . -maxdepth 1 -type f ! -name "*.part" | head -1)
           if [[ -z "$DOWNLOADED_FILE" ]]; then
             echo "❌ No file downloaded"
@@ -163,4 +169,4 @@ jobs:
       - name: Cleanup
         if: always()
         shell: bash
-        run: rm -rf temp_dl
+        run: rm -rf temp_dl gofile-dl
