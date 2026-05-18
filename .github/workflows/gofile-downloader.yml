@@ -1,4 +1,4 @@
-Gname: "Gofile Downloader"
+name: "Gofile Downloader"
 
 on:
   workflow_dispatch:
