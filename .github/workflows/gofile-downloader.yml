@@ -48,47 +48,44 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y p7zip-full curl jq
+          sudo apt-get install -y p7zip-full jq
+          # Install the working gofile-dl CLI tool
+          pip install gofile-dl
 
-      - name: Download from Gofile (using martadams89/gofile-dl)
+      - name: Download from Gofile (using gofile-dl CLI)
         id: download
         shell: bash
         run: |
           URL="${{ github.event.inputs.gofile_url }}"
           PASSWORD="${{ github.event.inputs.zip_password }}"
           mkdir -p temp_dl
+          cd temp_dl
 
-          # Build the docker command
-          # Mount the temp_dl directory to /app/downloads (the tool's default output path)
-          DOCKER_CMD="docker run --rm -v \"$(pwd)/temp_dl:/app/downloads\" martadams89/gofile-dl download -l \"$URL\""
-
-          # If a password is provided, add the flag
+          # Prepare the download command
+          CMD="gofile-dl \"$URL\" --output-dir ."
           if [ -n "$PASSWORD" ]; then
-            DOCKER_CMD="$DOCKER_CMD -p \"$PASSWORD\""
+            CMD="$CMD --password \"$PASSWORD\""
           fi
 
-          echo "Running: $DOCKER_CMD"
-          eval "$DOCKER_CMD"
+          echo "Running: $CMD"
+          eval "$CMD"
 
-          # The tool downloads files into /app/downloads inside the container,
-          # which maps to ./temp_dl on the host.
-          # Find the downloaded file(s) in temp_dl (exclude any .part or temporary files)
-          cd temp_dl
+          # Find the downloaded file (exclude temporary files)
           DOWNLOADED_FILE=$(find . -maxdepth 1 -type f ! -name "*.part" | head -1)
           if [[ -z "$DOWNLOADED_FILE" ]]; then
-            echo "❌ No file downloaded"
+            echo "No file downloaded"
             exit 1
           fi
 
           FILENAME=$(basename "$DOWNLOADED_FILE")
           FILESIZE=$(stat -c%s "$DOWNLOADED_FILE")
 
-          echo "✅ Downloaded: $FILENAME ($FILESIZE bytes)"
           echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
           echo "filesize=$FILESIZE" >> "$GITHUB_OUTPUT"
           echo "filepath=$(pwd)/$FILENAME" >> "$GITHUB_OUTPUT"
-
           cd ..
+
+      # ... rest of your workflow (Create Split Archive, Upload, etc.) remains the same ...
 
       - name: Create Split Archive
         id: archive
