@@ -50,16 +50,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y p7zip-full jq
 
-      # Optional debug step: inspect the Docker image to find the binary location
-      - name: Debug Docker image (find binary)
-        run: |
-          echo "Listing root directory of the image:"
-          docker run --rm martadams89/gofile-dl ls -la /
-          echo "Checking /usr/local/bin:"
-          docker run --rm martadams89/gofile-dl ls -la /usr/local/bin || true
-          echo "Checking /app:"
-          docker run --rm martadams89/gofile-dl ls -la /app || true
-
       - name: Download from Gofile (using official Docker image)
         id: download
         shell: bash
@@ -68,37 +58,18 @@ jobs:
           PASSWORD="${{ github.event.inputs.zip_password }}"
           mkdir -p temp_dl
 
-          # Try common binary paths; the correct one will be found by the container's entrypoint logic.
-          # According to the image's Dockerfile (from GitHub repo), the binary is at /gofile-dl.
-          # But if that fails, we use --entrypoint to force the binary path.
-          # Let's first try the simplest: assume the entrypoint is the binary, so just pass arguments.
-          # That gave "download: executable not found" earlier, so we need to specify the binary.
-          # The binary is likely /gofile-dl, but it wasn't found. Maybe it's /usr/local/bin/gofile-dl.
-          # We'll try both, and if still fails, we'll use a shell to run it.
-
-          # Attempt 1: Override entrypoint to /gofile-dl (common location)
+          # Build the docker command - let the container use its default entrypoint
           DOCKER_CMD="docker run --rm \
             -v \"$(pwd)/temp_dl:/app/downloads\" \
-            --entrypoint /gofile-dl \
             martadams89/gofile-dl \
             download -l \"$URL\" -d /app/downloads"
 
-          # If /gofile-dl doesn't exist, fallback to another path
-          echo "Trying to run with /gofile-dl..."
-          if ! eval "$DOCKER_CMD" 2>/dev/null; then
-            echo "First attempt failed, trying /usr/local/bin/gofile-dl..."
-            DOCKER_CMD="docker run --rm \
-              -v \"$(pwd)/temp_dl:/app/downloads\" \
-              --entrypoint /usr/local/bin/gofile-dl \
-              martadams89/gofile-dl \
-              download -l \"$URL\" -d /app/downloads"
-            eval "$DOCKER_CMD" || { echo "❌ Both binary paths failed. Check the debug output."; exit 1; }
+          if [ -n "$PASSWORD" ]; then
+            DOCKER_CMD="$DOCKER_CMD -p \"$PASSWORD\""
           fi
 
-          if [ -n "$PASSWORD" ]; then
-            # Password support would need to be added similarly, but for brevity we assume no password for now
-            echo "Password option not implemented in this fallback; please remove password or use alternative method."
-          fi
+          echo "Running: $DOCKER_CMD"
+          eval "$DOCKER_CMD"
 
           cd temp_dl
           DOWNLOADED_FILE=$(find . -maxdepth 1 -type f ! -name "*.part" | head -1)
