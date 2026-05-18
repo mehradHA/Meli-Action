@@ -67,32 +67,62 @@ jobs:
             echo "❌ Invalid Gofile URL"
             exit 1
           fi
-          echo "File ID: $FILE_ID"
+          echo "📝 File ID: $FILE_ID"
 
-          # 1. Create a guest account (get token)
+          # Use the correct API base URL (no /api prefix)
+          API_BASE="https://api.gofile.io"
+
+          # 1. Create a guest account to get a token
           echo "🔄 Creating guest account..."
-          TOKEN_RESPONSE=$(curl -s -X POST 'https://gofile.io/api/accounts')
+          TOKEN_RESPONSE=$(curl -s -X POST "${API_BASE}/accounts" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            -H "Accept: application/json")
+
+          # Debug: show raw response (helps debugging)
+          echo "Token response: $TOKEN_RESPONSE"
+
+          # Validate JSON
+          if ! echo "$TOKEN_RESPONSE" | jq -e . >/dev/null 2>&1; then
+            echo "❌ API did not return valid JSON"
+            exit 1
+          fi
+
+          STATUS=$(echo "$TOKEN_RESPONSE" | jq -r '.status')
+          if [[ "$STATUS" != "ok" ]]; then
+            echo "❌ API error: $STATUS"
+            echo "Response: $TOKEN_RESPONSE"
+            exit 1
+          fi
+
           TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.data.token')
           if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
             echo "❌ Failed to get token"
-            echo "Response: $TOKEN_RESPONSE"
             exit 1
           fi
           echo "✅ Token obtained"
 
-          # 2. Get file contents
+          # 2. Get file contents using the token
           echo "📡 Fetching file info..."
-          CONTENT_URL="https://gofile.io/api/contents/$FILE_ID?token=$TOKEN"
-          CONTENT_RESPONSE=$(curl -s "$CONTENT_URL")
-          STATUS=$(echo "$CONTENT_RESPONSE" | jq -r '.status')
+          CONTENT_URL="${API_BASE}/contents/${FILE_ID}?token=${TOKEN}"
+          CONTENT_RESPONSE=$(curl -s "$CONTENT_URL" \
+            -H "User-Agent: Mozilla/5.0" \
+            -H "Accept: application/json")
 
+          echo "Content response: $CONTENT_RESPONSE"
+
+          if ! echo "$CONTENT_RESPONSE" | jq -e . >/dev/null 2>&1; then
+            echo "❌ Invalid JSON from content API"
+            exit 1
+          fi
+
+          STATUS=$(echo "$CONTENT_RESPONSE" | jq -r '.status')
           if [[ "$STATUS" != "ok" ]]; then
-            echo "❌ API error: $STATUS"
+            echo "❌ Content API error: $STATUS"
             echo "Response: $CONTENT_RESPONSE"
             exit 1
           fi
 
-          # Extract first file (assuming single file in container)
+          # Extract the first file (assuming the container holds a single file)
           CONTENT_ID=$(echo "$CONTENT_RESPONSE" | jq -r '.data.contents | keys[0]')
           FILENAME=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$CONTENT_ID\"].name")
           SIZE=$(echo "$CONTENT_RESPONSE" | jq -r ".data.contents[\"$CONTENT_ID\"].size")
@@ -106,7 +136,7 @@ jobs:
           echo "📄 File: $FILENAME"
           echo "📦 Size: $SIZE bytes"
 
-          # 3. Download the file
+          # 3. Download the file using the direct link
           echo "⬇️ Downloading..."
           curl -L --fail --retry 3 --retry-delay 2 -o "$FILENAME" "$DOWNLOAD_LINK"
 
@@ -151,7 +181,7 @@ jobs:
             mv "${ARCHIVE_BASE}.7z.001" "${ARCHIVE_BASE}.7z"
           fi
 
-          # Remove original file
+          # Remove original downloaded file
           rm -f "$BASENAME"
 
           echo "archive_name=${ARCHIVE_BASE}.7z" >> "$GITHUB_OUTPUT"
